@@ -5,33 +5,22 @@ import (
 	"fmt"
 	"github.com/LepikovStan/backlinkCrawler/crawler"
 	"github.com/LepikovStan/backlinkCrawler/lib/queue"
+	"github.com/LepikovStan/backlinkCrawler/lib/util"
+	"github.com/LepikovStan/backlinkCrawler/lib/writer"
 	"github.com/LepikovStan/backlinkCrawler/parser"
-	//"./crawler"
-	//"./lib/queue"
-	//"./parser"
-	"time"
-	// "sync"
+	"log"
+	"os"
 	"sync"
+	"time"
 )
 
-var parsersCount int
-var crawlersCount int
+var workersCount int
 var maxDepth int
-
-func getStartList() []string {
-	return []string{
-		// "https://yandex.ru/yandsearch?text=golang%20error%20type&lr=2",
-		// "https://gobyexample.com/errors",
-		// "https://golang.org/pkg/sync",
-		//"https://developers.google.com/products/",
-		"http://www.tattyworld.net",
-	}
-}
+var counter int
 
 func initFlags() {
-	flag.IntVar(&parsersCount, "parsers", 1, "")
-	flag.IntVar(&crawlersCount, "crawlers", 1, "")
-	flag.IntVar(&maxDepth, "depth", 1, "")
+	flag.IntVar(&workersCount, "workers", 1, "")
+	flag.IntVar(&maxDepth, "depth", 0, "")
 	flag.Parse()
 }
 
@@ -39,13 +28,12 @@ func crawlWorker(in chan queue.Backlink, out chan queue.Backlink, wg *sync.WaitG
 	crwlr := crawler.New()
 	for msg := range in {
 		if msg.Depth > maxDepth {
+			out <- msg
 			break
 		}
 		body, err := crwlr.Crawl(msg.Url)
-		//fmt.Println("crawl depth", msg.Depth, maxDepth)
 		if err != nil {
 			msg.Error = err
-			fmt.Println("crawl worker error", err)
 			out <- msg
 			continue
 		}
@@ -53,59 +41,67 @@ func crawlWorker(in chan queue.Backlink, out chan queue.Backlink, wg *sync.WaitG
 		msg.Body = body
 		out <- msg
 	}
-	//fmt.Println("crawlWorker Done -<<<<<<<<<<<<<<<<<")
 	wg.Done()
 }
 
 func parseWorker(in chan queue.Backlink, out chan queue.Backlink, wg *sync.WaitGroup, Q *queue.Q) {
 	prsr := parser.New()
 	for msg := range in {
+		if msg.Depth > maxDepth {
+			break
+		}
 		if msg.Error != nil {
 			out <- msg
-			emptyBacklink := queue.Backlink{
-				Depth: msg.Depth+1,
-			}
-			Q.SetBuffer([]queue.Backlink{emptyBacklink})
-			Q.Write(Q.PopBuffer(parsersCount - len(in)))
+			Q.Set(Q.PopBuffer(workersCount - len(Q.GetChan())))
 			continue
 		}
 		urlList, err := prsr.Parse(msg.Body)
 		if err != nil {
 			msg.Error = err
-			//fmt.Println("parse worker error", err)
 			out <- msg
+			Q.Set(Q.PopBuffer(workersCount - len(Q.GetChan())))
 			continue
 		}
-		msg.BLList = transformUrlToBacklink(urlList, msg.Depth+1)
+		msg.BLList = util.TransformUrlToBacklink(urlList, msg.Depth+1)
 		Q.SetBuffer(msg.BLList)
-		Q.Write(Q.PopBuffer(parsersCount - len(in)))
+		Q.Set(Q.PopBuffer(workersCount - len(Q.GetChan())))
 		out <- msg
 	}
-	//fmt.Println("parseWorker Done")
 	wg.Done()
 }
 
-func resultHandler(in chan queue.Backlink) {
-	for msg := range in {
-		if msg.Error != nil {
-			fmt.Println("resultHandler error ->", msg.Error)
-		}
-		fmt.Println("resultHandler msg", msg.Url, msg.Depth)
+func resultHandler(in chan queue.Backlink, wg *sync.WaitGroup) {
+	dir, err := os.Getwd()
+	if err != nil {
+		log.Fatal(err)
 	}
-}
+	resultDir := fmt.Sprintf("%s/%s/%d", dir, "results", time.Now().Unix())
+	err = util.CreateDirIfNotExist(resultDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	wr := writer.New(resultDir)
+	defer wr.Destroy()
 
-func transformUrlToBacklink(urls []string, depth int) []queue.Backlink {
-	result := make([]queue.Backlink, len(urls))
-	for i, url := range urls {
-		result[i] = queue.Backlink{
-			Url:    url,
-			Body:   nil,
-			BLList: nil,
-			Error:  nil,
-			Depth:  depth,
+	for msg := range in {
+		if msg.Depth > maxDepth {
+			break
 		}
+		counter++
+		if msg.Error != nil {
+			result := fmt.Sprintf("%s:\n\terror:%s\n", msg.Url, msg.Error)
+			fmt.Println(result)
+			wr.WriteError(result)
+			continue
+		}
+		result := fmt.Sprintf("\n%s:\n", msg.Url)
+		for _, backlink := range msg.BLList {
+			result = fmt.Sprintf("%s\t%s\n", result, backlink.Url)
+		}
+		fmt.Println(result)
+		wr.WriteResult(result)
 	}
-	return result
+	wg.Done()
 }
 
 func main() {
@@ -113,28 +109,35 @@ func main() {
 	start := time.Now()
 	initFlags()
 
-	crawledCh := make(chan queue.Backlink, parsersCount)
+	counter = 0
+	crawledCh := make(chan queue.Backlink, workersCount)
 	crawlWG := sync.WaitGroup{}
 
-	parsedCh := make(chan queue.Backlink, parsersCount)
-	parseWG:= sync.WaitGroup{}
+	parsedCh := make(chan queue.Backlink, workersCount)
+	parseWG := sync.WaitGroup{}
+	resultWG := sync.WaitGroup{}
 
-	Q := queue.New(parsersCount)
-	Q.Write(transformUrlToBacklink(getStartList(), 0))
+	Q := queue.New(workersCount)
+	Q.SetBuffer(util.TransformUrlToBacklink(crawler.GetStartList(), 0))
+	Q.Set(Q.PopBuffer(workersCount - len(Q.GetChan())))
 
-	crawlWG.Add(crawlersCount)
-	for i := 0; i < crawlersCount; i++ {
+	crawlWG.Add(workersCount)
+	for i := 0; i < workersCount; i++ {
 		go crawlWorker(Q.GetChan(), crawledCh, &crawlWG)
 	}
-	parseWG.Add(parsersCount)
-	for i := 0; i < parsersCount; i++ {
+	parseWG.Add(workersCount)
+	for i := 0; i < workersCount; i++ {
 		go parseWorker(crawledCh, parsedCh, &parseWG, Q)
 	}
-	go resultHandler(parsedCh)
+	resultWG.Add(1)
+	go resultHandler(parsedCh, &resultWG)
 
 	crawlWG.Wait()
 	close(crawledCh)
 	parseWG.Wait()
+	close(parsedCh)
+	resultWG.Wait()
+	fmt.Println("total", counter)
 
 	end := time.Now()
 	fmt.Println("\n")

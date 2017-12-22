@@ -1,3 +1,4 @@
+// Package parser provides basic functions to parse html
 package parser
 
 import (
@@ -7,10 +8,16 @@ import (
 	"strings"
 )
 
-type Parser struct{}
+var count int
 
+// Parser is the type, contains the basic Parse method
+type Parser struct {
+	Num int
+}
+
+// Parse parsing html and find all links on the page
+// return list of finded links or error
 func (p *Parser) Parse(body io.Reader) ([]string, error) {
-	//fmt.Println("start Parse")
 	doc, err := goquery.NewDocumentFromReader(body)
 	result := []string{}
 
@@ -30,6 +37,10 @@ func (p *Parser) Parse(body io.Reader) ([]string, error) {
 	return result, nil
 }
 
+// New function initialize new Parser instance and return pointer to it
 func New() *Parser {
-	return new(Parser)
+	p := new(Parser)
+	count++
+	p.Num = count
+	return p
 }

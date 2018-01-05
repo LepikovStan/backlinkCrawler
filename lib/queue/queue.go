@@ -18,11 +18,9 @@ type Backlink struct {
 
 // Q is main struct in package to work with runtime storages
 type Q struct {
-	mux          sync.Mutex
 	q            chan Backlink
 	buffer       []Backlink
-	popbuffermux sync.Mutex
-	setbuffermux sync.Mutex
+	mu sync.Mutex
 }
 
 // GetBuffer func return elements of buffer
@@ -32,16 +30,16 @@ func (queue *Q) GetBuffer() []Backlink {
 
 // SetBuffer func set given elements to buffer
 func (queue *Q) SetBuffer(n []Backlink) {
-	queue.setbuffermux.Lock()
-	defer queue.setbuffermux.Unlock()
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
 
 	queue.buffer = append(queue.buffer, n...)
 }
 
 // PopBuffer func return n head elements of buffer and make buffer less to n elements
 func (queue *Q) PopBuffer(n int) []Backlink {
-	queue.popbuffermux.Lock()
-	defer queue.popbuffermux.Unlock()
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
 
 	if len(queue.buffer) < n {
 		res := queue.buffer
@@ -78,6 +76,20 @@ func (queue *Q) Get() Backlink {
 // GetChan func return
 func (queue *Q) GetChan() chan Backlink {
 	return queue.q
+}
+
+func TransformUrlToBacklink(urls []string, depth int) []Backlink {
+	result := make([]Backlink, len(urls))
+	for i, url := range urls {
+		result[i] = Backlink{
+			Url:    url,
+			Body:   nil,
+			BLList: nil,
+			Error:  nil,
+			Depth:  depth,
+		}
+	}
+	return result
 }
 
 // New function initialize new Q instance and return pointer to it

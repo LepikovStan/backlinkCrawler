@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"github.com/LepikovStan/backlinkCrawler/crawler"
 	"github.com/LepikovStan/backlinkCrawler/lib/queue"
-	"github.com/LepikovStan/backlinkCrawler/lib/util"
 	"github.com/LepikovStan/backlinkCrawler/lib/writer"
 	"github.com/LepikovStan/backlinkCrawler/parser"
 	"log"
@@ -62,7 +61,7 @@ func parseWorker(in chan queue.Backlink, out chan queue.Backlink, wg *sync.WaitG
 			Q.Set(Q.PopBuffer(workersCount - len(Q.GetChan())))
 			continue
 		}
-		msg.BLList = util.TransformUrlToBacklink(urlList, msg.Depth+1)
+		msg.BLList = queue.TransformUrlToBacklink(urlList, msg.Depth+1)
 		Q.SetBuffer(msg.BLList)
 		Q.Set(Q.PopBuffer(workersCount - len(Q.GetChan())))
 		out <- msg
@@ -76,7 +75,7 @@ func resultHandler(in chan queue.Backlink, wg *sync.WaitGroup) {
 		log.Fatal(err)
 	}
 	resultDir := fmt.Sprintf("%s/%s/%d", dir, "results", time.Now().Unix())
-	err = util.CreateDirIfNotExist(resultDir)
+	err = CreateDirIfNotExist(resultDir)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -104,6 +103,16 @@ func resultHandler(in chan queue.Backlink, wg *sync.WaitGroup) {
 	wg.Done()
 }
 
+func CreateDirIfNotExist(dir string) error {
+	if _, err := os.Stat(dir); os.IsNotExist(err) {
+		err = os.MkdirAll(dir, 0755)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func main() {
 	fmt.Println("Start...")
 	start := time.Now()
@@ -118,7 +127,7 @@ func main() {
 	resultWG := sync.WaitGroup{}
 
 	Q := queue.New(workersCount)
-	Q.SetBuffer(util.TransformUrlToBacklink(crawler.GetStartList(), 0))
+	Q.SetBuffer(queue.TransformUrlToBacklink(crawler.GetStartList(""), 0))
 	Q.Set(Q.PopBuffer(workersCount - len(Q.GetChan())))
 
 	crawlWG.Add(workersCount)

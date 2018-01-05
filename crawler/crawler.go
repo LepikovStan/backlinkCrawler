@@ -27,23 +27,15 @@ func readFile(path string) []string {
 }
 
 // GetStartList is function for receiving start list of web pages to crawl
-func GetStartList() []string {
+func GetStartList(path string) []string {
+	if path == "" {
+		path = "crawler/input.txt"
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
 	}
-	return readFile(fmt.Sprintf("%s/%s", dir, "crawler/input.txt"))
-	//return []string{
-	//	// "https://yandex.ru/yandsearch?text=golang%20error%20type&lr=2",
-	//	//"https://gobyexample.com/errors",
-	//	// "https://golang.org/pkg/sync",
-	//	//"https://developers.google.com/products/",
-	//	//"http://www.tattyworld.net",
-	//	//"https://yandex.ru/",
-	//	"https://golang.org/",
-	//	"",
-	//	"https://gobyexample.com/errors",
-	//}
+	return readFile(fmt.Sprintf("%s/%s", dir, path))
 }
 
 // Crawler is the type, contains the basic Crawl method

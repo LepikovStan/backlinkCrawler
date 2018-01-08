@@ -157,3 +157,15 @@ func TestQ_Get(t *testing.T) {
 		log.Fatalf("Depth of created element is %d, expected %d", result.Depth, depth)
 	}
 }
+
+func BenchmarkQ_Get(b *testing.B) {
+	queue := New(1)
+	urlsList := []string{"https://golang.org"}
+	depth := 1
+	ssl := TransformUrlToBacklink(urlsList, depth)
+
+	for i := 0; i < b.N; i++ {
+		queue.Set(ssl)
+		queue.Get()
+	}
+}

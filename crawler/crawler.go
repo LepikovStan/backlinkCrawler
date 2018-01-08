@@ -47,6 +47,11 @@ type Crawler struct {
 // error if exists
 func (c *Crawler) Crawl(url string) (io.Reader, error) {
 	resp, err := http.Get(url)
+
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+
 	if err != nil {
 		return nil, err
 	}

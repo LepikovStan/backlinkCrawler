@@ -1,154 +1,167 @@
 package main
 
 import (
+	"container/heap"
 	"flag"
 	"fmt"
-	"github.com/LepikovStan/backlinkCrawler/crawler"
-	"github.com/LepikovStan/backlinkCrawler/lib/queue"
-	"github.com/LepikovStan/backlinkCrawler/lib/writer"
-	"github.com/LepikovStan/backlinkCrawler/parser"
+	"github.com/LepikovStan/backlinkCrawler/lib"
 	"log"
 	"os"
+	"os/signal"
 	"sync"
-	"time"
 )
 
 var workersCount int
 var maxDepth int
-var counter int
 
-func initFlags() {
-	flag.IntVar(&workersCount, "workers", 1, "")
+func parseFlags() {
+	flag.IntVar(&workersCount, "workers", 2, "")
 	flag.IntVar(&maxDepth, "depth", 0, "")
 	flag.Parse()
 }
 
-func crawlWorker(in chan queue.Backlink, out chan queue.Backlink, wg *sync.WaitGroup) {
-	crwlr := crawler.New()
-	for msg := range in {
-		if msg.Depth > maxDepth {
-			out <- msg
-			break
-		}
-		body, err := crwlr.Crawl(msg.Url)
-		if err != nil {
-			msg.Error = err
-			out <- msg
-			continue
-		}
-
-		msg.Body = body
-		out <- msg
-	}
-	wg.Done()
+type Worker interface {
+	Start() (*sync.WaitGroup, error)
+	Stop()
 }
 
-func parseWorker(in chan queue.Backlink, out chan queue.Backlink, wg *sync.WaitGroup, Q *queue.Q) {
-	prsr := parser.New()
-	for msg := range in {
-		if msg.Depth > maxDepth {
-			break
-		}
-		if msg.Error != nil {
-			out <- msg
-			Q.Set(Q.PopBuffer(workersCount - len(Q.GetChan())))
-			continue
-		}
-		urlList, err := prsr.Parse(msg.Body)
-		if err != nil {
-			msg.Error = err
-			out <- msg
-			Q.Set(Q.PopBuffer(workersCount - len(Q.GetChan())))
-			continue
-		}
-		msg.BLList = queue.TransformUrlToBacklink(urlList, msg.Depth+1)
-		Q.SetBuffer(msg.BLList)
-		Q.Set(Q.PopBuffer(workersCount - len(Q.GetChan())))
-		out <- msg
-	}
-	wg.Done()
+type Options struct {
+	in, out          chan *Backlink
+	wCount, maxDepth int
+	lg               *Logger
+	pQueue           *PriorityQueue
+	queue            *Queue
 }
 
-func resultHandler(in chan queue.Backlink, wg *sync.WaitGroup) {
+type Backlink struct {
+	Url             string
+	Body            []byte
+	BLList          []*Backlink
+	Error           error
+	Depth, TryCount int
+	Shutdown        bool
+
+	index, priority int
+}
+
+func getStartList(path string) []string {
+	if path == "" {
+		path = "./input.txt"
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		log.Fatal(err)
 	}
-	resultDir := fmt.Sprintf("%s/%s/%d", dir, "results", time.Now().Unix())
-	err = CreateDirIfNotExist(resultDir)
-	if err != nil {
-		log.Fatal(err)
-	}
-	wr := writer.New(resultDir)
-	defer wr.Destroy()
-
-	for msg := range in {
-		if msg.Depth > maxDepth {
-			break
-		}
-		counter++
-		if msg.Error != nil {
-			result := fmt.Sprintf("%s:\n\terror:%s\n", msg.Url, msg.Error)
-			fmt.Println(result)
-			wr.WriteError(result)
-			continue
-		}
-		result := fmt.Sprintf("\n%s:\n", msg.Url)
-		for _, backlink := range msg.BLList {
-			result = fmt.Sprintf("%s\t%s\n", result, backlink.Url)
-		}
-		fmt.Println(result)
-		wr.WriteResult(result)
-	}
-	wg.Done()
+	return lib.ReadFile(fmt.Sprintf("%s/%s", dir, path))
 }
 
-func CreateDirIfNotExist(dir string) error {
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		err = os.MkdirAll(dir, 0755)
-		if err != nil {
-			return err
+func TransformUrlToBacklink(urls []string, depth int) []*Backlink {
+	result := make([]*Backlink, len(urls))
+	for i, url := range urls {
+		result[i] = &Backlink{
+			Url:      url,
+			Body:     nil,
+			BLList:   nil,
+			Error:    nil,
+			Depth:    depth,
+			TryCount: 3,
+			priority: depth + 10,
 		}
 	}
-	return nil
+	return result
+}
+
+func initializeCrawlIn(crawlIn chan *Backlink, pQueue *PriorityQueue) {
+	startList := TransformUrlToBacklink(getStartList(""), 0)
+
+	for i := 0; i < len(startList); i++ {
+		heap.Push(pQueue, startList[i])
+		//crawlIn <- startList[i]
+	}
+	for i := 0; i < workersCount; i++ {
+		crawlIn <- heap.Pop(pQueue).(*Backlink)
+	}
+}
+
+func interceptSignal(chIn chan *Backlink, ehwg *sync.WaitGroup) {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt)
+
+	// Block until a signal is received.
+	<-c
+	fmt.Println()
+	fmt.Println("Graceful shutdown...")
+	ehwg.Done()
+	for i := 0; i < workersCount; i++ {
+		chIn <- &Backlink{
+			Url:      "",
+			Body:     nil,
+			BLList:   nil,
+			Error:    nil,
+			Depth:    0,
+			Shutdown: true,
+			priority: 0,
+		}
+	}
 }
 
 func main() {
-	fmt.Println("Start...")
-	start := time.Now()
-	initFlags()
+	parseFlags()
+	chIn := make(chan *Backlink, workersCount)
+	chOut := make(chan *Backlink, workersCount)
+	pQueue := NewPQueue()
+	queue := NewOueue()
 
-	counter = 0
-	crawledCh := make(chan queue.Backlink, workersCount)
-	crawlWG := sync.WaitGroup{}
+	initializeCrawlIn(chIn, pQueue)
+	lg := new(Logger)
+	lg.Init()
 
-	parsedCh := make(chan queue.Backlink, workersCount)
-	parseWG := sync.WaitGroup{}
-	resultWG := sync.WaitGroup{}
+	parser := new(Parser)
+	parser.Init(&Options{
+		chIn,
+		chOut,
+		workersCount,
+		maxDepth,
+		nil,
+		nil,
+		nil,
+	})
 
-	Q := queue.New(workersCount)
-	Q.SetBuffer(queue.TransformUrlToBacklink(crawler.GetStartList(""), 0))
-	Q.Set(Q.PopBuffer(workersCount - len(Q.GetChan())))
+	resultManager := new(ResultManager)
+	resultManager.Init(&Options{
+		chOut,
+		chIn,
+		workersCount,
+		maxDepth,
+		lg,
+		pQueue,
+		queue,
+	})
 
-	crawlWG.Add(workersCount)
-	for i := 0; i < workersCount; i++ {
-		go crawlWorker(Q.GetChan(), crawledCh, &crawlWG)
-	}
-	parseWG.Add(workersCount)
-	for i := 0; i < workersCount; i++ {
-		go parseWorker(crawledCh, parsedCh, &parseWG, Q)
-	}
-	resultWG.Add(1)
-	go resultHandler(parsedCh, &resultWG)
+	errorHandler := new(ErrorHandler)
+	errorHandler.Init(&Options{
+		nil,
+		chIn,
+		1,
+		maxDepth,
+		nil,
+		pQueue,
+		queue,
+	})
 
-	crawlWG.Wait()
-	close(crawledCh)
-	parseWG.Wait()
-	close(parsedCh)
-	resultWG.Wait()
-	fmt.Println("total", counter)
+	pwg, _ := parser.Start()
+	rmwg, _ := resultManager.Start()
+	ehwg, _ := errorHandler.Start()
+	go interceptSignal(chIn, ehwg)
 
-	end := time.Now()
-	fmt.Println("\n")
-	fmt.Println(end.Sub(start))
+	fmt.Println()
+
+	ehwg.Wait()
+	errorHandler.Stop()
+
+	pwg.Wait()
+	parser.Stop()
+
+	rmwg.Wait()
+	resultManager.Stop()
 }

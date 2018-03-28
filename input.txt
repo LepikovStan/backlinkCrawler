@@ -1,0 +1,4 @@
+https://golang.org/
+ya.ru
+http://ya.ru
+http://ya.ru

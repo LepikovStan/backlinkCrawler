@@ -12,10 +12,22 @@ import (
 )
 
 var workersCount int
+var errorWorkersCount int
 var maxDepth int
+
+var StopMessage = &Backlink{
+	Url:      "",
+	Body:     nil,
+	BLList:   nil,
+	Error:    nil,
+	Depth:    0,
+	Shutdown: true,
+	priority: 0,
+}
 
 func parseFlags() {
 	flag.IntVar(&workersCount, "workers", 2, "")
+	flag.IntVar(&errorWorkersCount, "errorWorkers", 1, "")
 	flag.IntVar(&maxDepth, "depth", 0, "")
 	flag.Parse()
 }
@@ -23,14 +35,16 @@ func parseFlags() {
 type Worker interface {
 	Start() (*sync.WaitGroup, error)
 	Stop()
+	Shutdown()
 }
 
 type Options struct {
-	in, out          chan *Backlink
-	wCount, maxDepth int
-	lg               *Logger
-	pQueue           *PriorityQueue
-	queue            *Queue
+	wCount, ewCount, maxDepth int
+
+	in, out, eIn, eOut chan *Backlink
+	lg                 *Logger
+	pQueue             *PriorityQueue
+	queue              *Queue
 }
 
 type Backlink struct {
@@ -64,7 +78,7 @@ func TransformUrlToBacklink(urls []string, depth int) []*Backlink {
 			BLList:   nil,
 			Error:    nil,
 			Depth:    depth,
-			TryCount: 3,
+			TryCount: 4,
 			priority: depth + 10,
 		}
 	}
@@ -73,91 +87,101 @@ func TransformUrlToBacklink(urls []string, depth int) []*Backlink {
 
 func initializeCrawlIn(crawlIn chan *Backlink, pQueue *PriorityQueue) {
 	startList := TransformUrlToBacklink(getStartList(""), 0)
+	msgToStart := len(startList)
+	if workersCount <= msgToStart {
+		msgToStart = workersCount
+	}
 
 	for i := 0; i < len(startList); i++ {
 		heap.Push(pQueue, startList[i])
 		//crawlIn <- startList[i]
 	}
-	for i := 0; i < workersCount; i++ {
+	fmt.Println("msgToStart", msgToStart)
+	for i := 0; i < msgToStart; i++ {
 		crawlIn <- heap.Pop(pQueue).(*Backlink)
 	}
 }
 
-func interceptSignal(chIn chan *Backlink, ehwg *sync.WaitGroup) {
+func interceptSignal(w ...Worker) {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt)
 
 	// Block until a signal is received.
 	<-c
 	fmt.Println()
-	fmt.Println("Graceful shutdown...")
-	ehwg.Done()
-	for i := 0; i < workersCount; i++ {
-		chIn <- &Backlink{
-			Url:      "",
-			Body:     nil,
-			BLList:   nil,
-			Error:    nil,
-			Depth:    0,
-			Shutdown: true,
-			priority: 0,
-		}
+	fmt.Println("Shutdown...")
+	//p.Shutdown()
+	for i := 0; i < len(w); i++ {
+		w[i].Shutdown()
 	}
 }
 
 func main() {
 	parseFlags()
-	chIn := make(chan *Backlink, workersCount)
-	chOut := make(chan *Backlink, workersCount)
+	parseIn := make(chan *Backlink, workersCount)
+	parseOut := make(chan *Backlink, workersCount)
+	errorsIn := make(chan *Backlink, errorWorkersCount)
+	errorsOut := make(chan *Backlink, errorWorkersCount)
 	pQueue := NewPQueue()
 	queue := NewOueue()
-
-	initializeCrawlIn(chIn, pQueue)
 	lg := new(Logger)
 	lg.Init()
 
+	initializeCrawlIn(parseIn, pQueue)
+
 	parser := new(Parser)
 	parser.Init(&Options{
-		chIn,
-		chOut,
-		workersCount,
-		maxDepth,
-		nil,
-		nil,
-		nil,
+		in:       parseIn,
+		out:      parseOut,
+		wCount:   workersCount,
+		maxDepth: maxDepth,
+		pQueue:   pQueue,
+	})
+
+	eParser := new(Parser)
+	eParser.Init(&Options{
+		in:       errorsIn,
+		out:      errorsOut,
+		wCount:   workersCount,
+		maxDepth: maxDepth,
+		pQueue:   pQueue,
 	})
 
 	resultManager := new(ResultManager)
 	resultManager.Init(&Options{
-		chOut,
-		chIn,
-		workersCount,
-		maxDepth,
-		lg,
-		pQueue,
-		queue,
+		in:       parseOut,
+		out:      parseIn,
+		eIn:      errorsOut,
+		eOut:     errorsIn,
+		wCount:   workersCount,
+		ewCount:  errorWorkersCount,
+		maxDepth: maxDepth,
+		lg:       lg,
+		pQueue:   pQueue,
+		queue:    queue,
 	})
 
-	errorHandler := new(ErrorHandler)
-	errorHandler.Init(&Options{
-		nil,
-		chIn,
-		1,
-		maxDepth,
-		nil,
-		pQueue,
-		queue,
-	})
+	//errorHandler := new(ErrorHandler)
+	//errorHandler.Init(&Options{
+	//	nil,
+	//	chIn,
+	//	1,
+	//	maxDepth,
+	//	nil,
+	//	pQueue,
+	//	queue,
+	//})
 
 	pwg, _ := parser.Start()
 	rmwg, _ := resultManager.Start()
-	ehwg, _ := errorHandler.Start()
-	go interceptSignal(chIn, ehwg)
+	//ewg, _ := eParser.Start()
+	eParser.Start()
+	//go interceptSignal(parser, eParser, resultManager)
 
 	fmt.Println()
 
-	ehwg.Wait()
-	errorHandler.Stop()
+	//ewg.Wait()
+	//eParser.Stop()
 
 	pwg.Wait()
 	parser.Stop()

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	//"time"
+	"container/heap"
 )
 
 // Parser is the type, contains the basic Parse method
@@ -14,6 +15,7 @@ type Parser struct {
 
 	in, out chan *Backlink
 	wg      *sync.WaitGroup
+	pQueue  *PriorityQueue
 }
 
 func (p *Parser) Init(options *Options) error {
@@ -22,6 +24,7 @@ func (p *Parser) Init(options *Options) error {
 	p.wCount = options.wCount
 	p.wg = &sync.WaitGroup{}
 	p.maxDepth = options.maxDepth
+	p.pQueue = options.pQueue
 	return nil
 }
 
@@ -40,12 +43,23 @@ func (p *Parser) Stop() {
 	fmt.Println("parser stopped")
 }
 
+func (p *Parser) Shutdown() {
+	for i := 0; i < p.wCount; i++ {
+		if len(p.in) > 0 {
+			heap.Push(p.pQueue, StopMessage)
+			continue
+		}
+		p.in <- StopMessage
+	}
+}
+
 func pWorker(p *Parser, i int) {
 	fmt.Println(fmt.Sprintf("parse worker %d started", i))
 	for msg := range p.in {
-		fmt.Println("parser in", msg, len(p.in), msg.Shutdown, msg.Depth > p.maxDepth)
+		fmt.Println("parser in", msg.Url, msg.Error)
 		//startTime := time.Now()
-		if msg.Shutdown {
+		if msg.Shutdown == true {
+			p.out <- msg
 			break
 		}
 		if msg.Depth > p.maxDepth {
@@ -70,6 +84,8 @@ func pWorker(p *Parser, i int) {
 		//fmt.Println("result", urlList)
 	}
 	p.wg.Done()
+	p.wCount--
+	fmt.Println("parser shutdown", i)
 }
 
 // Parse parsing html and find all links on the page

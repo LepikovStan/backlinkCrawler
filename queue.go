@@ -39,13 +39,13 @@ func (q *Queue) Pop() *Backlink {
 		q.count = 0
 		q.tail = q.head
 	}
-	fmt.Println("queue pop", q.tail, q.head, q.count)
+	//fmt.Println("queue pop", q.tail, q.head, q.count)
 	q.mu.Unlock()
 	return headItem
 }
 
 func (q *Queue) Len() int {
-	fmt.Println("queue len", q.tail, q.head, q.count)
+	//fmt.Println("queue len", q.tail, q.head, q.count)
 	return q.tail - q.head
 }
 

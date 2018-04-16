@@ -4,7 +4,6 @@ package main
 import (
 	"container/heap"
 	//"fmt"
-	"fmt"
 )
 
 // A PriorityQueue implements heap.Interface and holds Items.
@@ -24,6 +23,7 @@ func (pq PriorityQueue) Swap(i, j int) {
 }
 
 func (pq *PriorityQueue) Push(x interface{}) {
+	//fmt.Println("rm.epQueue Pust")
 	n := len(*pq)
 	item := x.(*Backlink)
 	item.index = n
@@ -32,18 +32,14 @@ func (pq *PriorityQueue) Push(x interface{}) {
 
 func (pq *PriorityQueue) Pop() interface{} {
 	old := *pq
+	//fmt.Println("rm.epQueue Pop", old)
 	n := len(old)
+	//fmt.Println("rm.epQueue Pop", n)
 	item := old[n-1]
 	item.index = -1 // for safety
 	*pq = old[0 : n-1]
+	//fmt.Println("rm.epQueue Pop", *pq)
 	return item
-}
-
-func (pq *PriorityQueue) Clear() {
-	emptyPQ := make(PriorityQueue, 0)
-	fmt.Println("clear", emptyPQ)
-	pq = &emptyPQ
-	fmt.Println("clear", pq)
 }
 
 func NewPQueue() *PriorityQueue {

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"sync"
 	//"time"
-	"container/heap"
+	//"container/heap"
 )
 
 // Parser is the type, contains the basic Parse method
@@ -16,6 +16,7 @@ type Parser struct {
 	in, out chan *Backlink
 	wg      *sync.WaitGroup
 	pQueue  *PriorityQueue
+	queue   *Q
 }
 
 func (p *Parser) Init(options *Options) error {
@@ -25,11 +26,12 @@ func (p *Parser) Init(options *Options) error {
 	p.wg = &sync.WaitGroup{}
 	p.maxDepth = options.maxDepth
 	p.pQueue = options.pQueue
+	p.queue = options.queue
 	return nil
 }
 
 func (p *Parser) Start() (*sync.WaitGroup, error) {
-	fmt.Println("parser started")
+	//fmt.Println("parser started")
 	p.wg.Add(p.wCount)
 	for i := 0; i < p.wCount; i++ {
 		p.wNum = i
@@ -38,33 +40,35 @@ func (p *Parser) Start() (*sync.WaitGroup, error) {
 	return p.wg, nil
 }
 
-func (p *Parser) Stop() {
+func (p *Parser) Close() {
 	close(p.out)
-	fmt.Println("parser stopped")
+	//fmt.Println("parser stopped")
 }
 
 func (p *Parser) Shutdown() {
 	for i := 0; i < p.wCount; i++ {
-		if len(p.in) > 0 {
-			heap.Push(p.pQueue, StopMessage)
-			continue
-		}
-		p.in <- StopMessage
+		p.queue.Unshift(StopMessage)
+	}
+}
+
+func (p *Parser) Kill() {
+	for i := 0; i < p.wCount; i++ {
+		p.wg.Done()
 	}
 }
 
 func pWorker(p *Parser, i int) {
 	fmt.Println(fmt.Sprintf("parse worker %d started", i))
 	for msg := range p.in {
-		fmt.Println("parser in", msg.Url, msg.Error)
+		fmt.Println("parser in", msg.Url, msg.Shutdown)
 		//startTime := time.Now()
 		if msg.Shutdown == true {
 			p.out <- msg
 			break
 		}
-		if msg.Depth > p.maxDepth {
-			break
-		}
+		//if msg.Depth > p.maxDepth {
+		//	break
+		//}
 		//fmt.Println(fmt.Sprintf("parse worker %d parse url %s, depth %d", i, msg.Url, msg.Depth))
 		if msg.Error != nil {
 			p.out <- msg
@@ -79,6 +83,7 @@ func pWorker(p *Parser, i int) {
 		}
 
 		msg.BLList = TransformUrlToBacklink(BLList, msg.Depth+1)
+		Counter++
 		p.out <- msg
 		//fmt.Println(fmt.Sprintf("parse worker %d parsed url %s, %s", i, msg.Url, time.Now().Sub(startTime)))
 		//fmt.Println("result", urlList)

@@ -3,7 +3,6 @@ package lib
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"time"
@@ -22,23 +21,6 @@ func ReadFile(path string) []string {
 		result = append(result, scanner.Text())
 	}
 	return result
-}
-
-func ReadStream(r io.Reader) ([]byte, error) {
-	var data, result []byte
-	var error error
-	for {
-		data = make([]byte, CHUNK)
-		count, err := r.Read(data)
-		result = append(result, data[:count]...)
-		if err != io.EOF {
-			error = err
-		}
-		if err != nil || count == 0 {
-			break
-		}
-	}
-	return result, error
 }
 
 func CreateResultDir() string {

@@ -5,8 +5,6 @@ import (
 	"github.com/PuerkitoBio/goquery"
 	"strings"
 	"sync"
-	//"time"
-	//"container/heap"
 )
 
 // Parser is the type, contains the basic Parse method
@@ -15,7 +13,6 @@ type Parser struct {
 
 	in, out chan *Backlink
 	wg      *sync.WaitGroup
-	pQueue  *PriorityQueue
 	queue   *Q
 }
 
@@ -23,10 +20,10 @@ func (p *Parser) Init(options *Options) error {
 	p.in = options.in
 	p.out = options.out
 	p.wCount = options.wCount
-	p.wg = &sync.WaitGroup{}
 	p.maxDepth = options.maxDepth
-	p.pQueue = options.pQueue
 	p.queue = options.queue
+
+	p.wg = &sync.WaitGroup{}
 	return nil
 }
 
@@ -52,6 +49,7 @@ func (p *Parser) Shutdown() {
 }
 
 func (p *Parser) Kill() {
+	close(p.out)
 	for i := 0; i < p.wCount; i++ {
 		p.wg.Done()
 	}
@@ -60,20 +58,16 @@ func (p *Parser) Kill() {
 func pWorker(p *Parser, i int) {
 	fmt.Println(fmt.Sprintf("parse worker %d started", i))
 	for msg := range p.in {
-		fmt.Println("parser in", msg.Url, msg.Shutdown)
-		//startTime := time.Now()
-		if msg.Shutdown == true {
+		if msg.Error != nil {
+			fmt.Println(fmt.Sprintf("parser in retry %s, attempt: %d", msg.Url, MAX_RETRY_COUNT-msg.ReTry))
+		} else {
+			fmt.Println("parser in", msg.Url, msg.Shutdown)
+		}
+		if msg == StopMessage {
 			p.out <- msg
 			break
 		}
-		//if msg.Depth > p.maxDepth {
-		//	break
-		//}
-		//fmt.Println(fmt.Sprintf("parse worker %d parse url %s, depth %d", i, msg.Url, msg.Depth))
-		if msg.Error != nil {
-			p.out <- msg
-			continue
-		}
+
 		BLList, err := parse(msg.Url)
 
 		if err != nil {
@@ -83,10 +77,7 @@ func pWorker(p *Parser, i int) {
 		}
 
 		msg.BLList = TransformUrlToBacklink(BLList, msg.Depth+1)
-		Counter++
 		p.out <- msg
-		//fmt.Println(fmt.Sprintf("parse worker %d parsed url %s, %s", i, msg.Url, time.Now().Sub(startTime)))
-		//fmt.Println("result", urlList)
 	}
 	p.wg.Done()
 	p.wCount--

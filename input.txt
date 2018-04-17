@@ -1,1 +1,5 @@
 ya.ru
+http://ya.ru
+http://golang.org
+http://go-search.org
+go.ru

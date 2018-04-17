@@ -9,6 +9,22 @@ import (
 	"sync"
 )
 
+func fmtResultLog(msg *Backlink) []string {
+	result := make([]string, len(msg.BLList)+1)
+	result[0] = msg.Url
+	for i := 0; i < len(msg.BLList); i++ {
+		result[i+1] = fmt.Sprintf("    %s", msg.BLList[i].Url)
+	}
+	return result
+}
+
+func fmtErrorLog(msg *Backlink) []string {
+	return []string{
+		msg.Url,
+		fmt.Sprintf("    %s", msg.Error),
+	}
+}
+
 type ILogger interface {
 	Log(args ...string)
 }
@@ -19,6 +35,10 @@ type Logger struct {
 }
 
 func wlog(f io.Writer, args ...string) {
+
+	defer func() {
+		fmt.Println("Log Done")
+	}()
 	for i := 0; i < len(args); i++ {
 		fmt.Fprintln(f, args[i])
 	}
@@ -31,8 +51,17 @@ func (l *Logger) Init() {
 	}
 }
 
-func (l *Logger) Log(level string, args ...string) {
+func (l *Logger) Log(level string, msg *Backlink) {
 	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	fmt.Println("Log")
+	args := []string{}
+	switch level {
+	case "result":
+		args = fmtResultLog(msg)
+	case "error":
+		args = fmtErrorLog(msg)
+	}
 	wlog(l.files[level], args...)
-	l.mu.Unlock()
 }

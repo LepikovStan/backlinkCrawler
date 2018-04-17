@@ -42,6 +42,13 @@ func (q Q) Len() int {
 	return len(q.arr)
 }
 
+func (q *Q) Clear() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	q.arr = []*Backlink{}
+}
+
 func NewQ() *Q {
 	q := new(Q)
 	q.mu = &sync.RWMutex{}
